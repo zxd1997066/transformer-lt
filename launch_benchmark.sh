@@ -13,7 +13,9 @@ function main {
 
     pip install -r ${workload_dir}/requirements.txt
     # pip install --no-deps torchvision -f https://download.pytorch.org/whl/torch_stable.html
-    pip install fairseq
+    git clone https://github.com/pytorch/fairseq
+    cd fairseq
+    pip install --editable .
     #pip uninstall -y fairseq fastBPE cython
     #python setup.py clean
     #pip install -e .
