@@ -13,13 +13,13 @@ function main {
 
     pip install -r ${workload_dir}/requirements.txt
     # pip install --no-deps torchvision -f https://download.pytorch.org/whl/torch_stable.html
-    git clone https://github.com/pytorch/fairseq
-    cd fairseq
+    git clone https://github.com/pytorch/fairseq new
+    cd new/
     pip install --editable .
     #pip uninstall -y fairseq fastBPE cython
     #python setup.py clean
     #pip install -e .
-
+    cd ..
     # if multiple use 'xxx,xxx,xxx'
     model_name_list=($(echo "${model_name}" |sed 's/,/ /g'))
     batch_size_list=($(echo "${batch_size}" |sed 's/,/ /g'))
@@ -68,7 +68,7 @@ function generate_core {
             OOB_EXEC_HEADER=" CUDA_VISIBLE_DEVICES=${device_array[i]} "
         fi
         printf " ${OOB_EXEC_HEADER} \
-            python fairseq-generate ${DATASET_DIR}/iwslt14.tokenized.de-en --path ${DATASET_DIR}/checkpoint_best.pt \
+            fairseq-generate ${DATASET_DIR}/iwslt14.tokenized.de-en --path ${DATASET_DIR}/checkpoint_best.pt \
                 --beam 5 --remove-bpe --cpu \
                 --max_iters ${num_iter} --warmup_iters ${num_warmup} \
                 --batch-size ${batch_size} \
