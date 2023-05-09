@@ -229,8 +229,9 @@ def main(args):
             1.0 / gen_timer.avg,
         )
     )
-    logger.info("| Generate {} with beam={}".format(args.gen_subset, args.beam))
 
+    logger.info("| Generate {} with beam={}".format(args.gen_subset, args.beam))
+    logger.info("| Throughput:{:.2f}".format(num_sentences / gen_timer.sum))
 
 def cli_main():
     parser = options.get_generation_parser()

@@ -193,6 +193,20 @@ def get_parser(desc, default_task='translation'):
                         help='threshold FP16 loss scale from below')
     parser.add_argument('--user-dir', default=None,
                         help='path to a python module containing custom extensions (tasks and/or architectures)')
+    parser.add_argument('--ipex', action='store_true', default=False,
+                        help='enable Intel_PyTorch_Extension')
+    parser.add_argument('--jit', action='store_true', default=False,
+                        help='enable jit')
+    parser.add_argument('--precision', type=str, default="float32",
+                    help='precision, float32, bfloat16')
+    parser.add_argument('--max_iters', default=0, type=int, metavar='N',
+                        help='max iterations to run')
+    parser.add_argument('--warmup_iters', default=10, type=int, metavar='N',
+                        help='iterations number to warmup')
+    parser.add_argument('--channels_last', type=int, default=1,
+                        help='use channels last format')
+    parser.add_argument('--profile', action='store_true',
+                        help='Trigger profile on current topology.')
 
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():

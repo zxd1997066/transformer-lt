@@ -88,7 +88,6 @@ setup(
         'numpy',
         'regex',
         'sacrebleu',
-        'torch',
         'tqdm',
     ],
     packages=find_packages(exclude=['scripts', 'tests']),

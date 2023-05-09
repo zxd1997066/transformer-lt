@@ -223,7 +223,7 @@ class LightweightConv1dTBC(nn.Module):
             weight = weight.narrow(2, K-T, T)
             K, P = T, T-1
         # turn the convolution filters into band matrices
-        weight_expanded = weight.new_zeros(B*H, T, T+K-1, requires_grad=False)
+        weight_expanded = weight.new_zeros(B*H, T, T+K-1, requires_grad=True)
         weight_expanded.as_strided((B*H, T, K), (T*(T+K-1), T+K, 1)).copy_(weight)
         weight_expanded = weight_expanded.narrow(2, P, T)
         weight_expanded = F.dropout(weight_expanded, self.weight_dropout, training=self.training)

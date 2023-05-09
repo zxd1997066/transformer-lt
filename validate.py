@@ -16,6 +16,10 @@ def main(args, override_args=None):
     use_fp16 = args.fp16
     use_cuda = torch.cuda.is_available() and not args.cpu
 
+    if args.precision == "bfloat16":
+        # with torch.amp.autocast(enabled=True, configure=torch.bfloat16, torch.no_grad(): 
+        print("Running with bfloat16...")
+
     if override_args is not None:
         overrides = vars(override_args)
         overrides.update(eval(getattr(override_args, 'model_overrides', '{}')))
@@ -36,6 +40,22 @@ def main(args, override_args=None):
             model.half()
         if use_cuda:
             model.cuda()
+        if args.channels_last:
+            model_oob = model
+            try:
+                model_oob = model_oob.to(memory_format=torch.channels_last)
+                print("---- Use channels last format.")
+            except:
+                print("---- Use normal format.")
+            model = model_oob
+        if args.ipex:
+            import intel_extension_for_pytorch as ipex
+            if args.precision == 'bfloat16':
+                model = ipex.optimize(model, dtype=torch.bfloat16, inplace=True)
+                print('Running with bfloat16...')
+            else:
+                model = ipex.optimize(model, dtype=torch.float32, inplace=True)
+                print('Running with float32...')
 
     # Print args
     print(model_args)
