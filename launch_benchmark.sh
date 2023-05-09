@@ -13,12 +13,11 @@ function main {
 
     pip install -r ${workload_dir}/requirements.txt
     # pip install --no-deps torchvision -f https://download.pytorch.org/whl/torch_stable.html
-    cd fairseq/
-    pip install --editable .
+    #cd fairseq/
+    pip install -e .
     #pip uninstall -y fairseq fastBPE cython
     #python setup.py clean
     #pip install -e .
-    cd ..
     # if multiple use 'xxx,xxx,xxx'
     model_name_list=($(echo "${model_name}" |sed 's/,/ /g'))
     batch_size_list=($(echo "${batch_size}" |sed 's/,/ /g'))
