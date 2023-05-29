@@ -40,7 +40,7 @@ def gen_vocab(
         f"--model_type={model_type}",
         f"--vocab_size={vocab_size}",
         "--character_coverage=1.0",
-        f"--num_threads={cpu_count()}",
+        f"--num_threads=56",
         f"--unk_id={UNK_TOKEN_ID}",
         f"--bos_id={BOS_TOKEN_ID}",
         f"--eos_id={EOS_TOKEN_ID}",

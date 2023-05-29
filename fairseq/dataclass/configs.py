@@ -192,6 +192,11 @@ class CommonConfig(FairseqDataclass):
         default=None, metadata={"help": "threshold FP16 loss scale from below"}
     )
     amp: bool = field(default=False, metadata={"help": "use automatic mixed precision"})
+    precision: str = field(default='float32', metadata={"help": "precision"})
+    channels_last: int = field(default=1, metadata={"help": "channels_last"})
+    profile: bool = field(default=False, metadata={"help": "profile"})
+    num_iter: int = field(default=0, metadata={"help": "num_iter"})
+    num_warmup: int = field(default=0, metadata={"help": "num_warmup"})
     amp_batch_retries: int = field(
         default=2,
         metadata={

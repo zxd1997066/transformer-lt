@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import sys
+import time
 from argparse import Namespace
 from itertools import chain
 
@@ -38,16 +39,43 @@ def main(cfg: DictConfig):
         cfg.generation.replace_unk is None or cfg.dataset.dataset_impl == "raw"
     ), "--replace-unk requires a raw text dataset (--dataset-impl=raw)"
 
-    if cfg.common_eval.results_path is not None:
-        os.makedirs(cfg.common_eval.results_path, exist_ok=True)
-        output_path = os.path.join(
-            cfg.common_eval.results_path,
-            "generate-{}.txt".format(cfg.dataset.gen_subset),
-        )
-        with open(output_path, "w", buffering=1, encoding="utf-8") as h:
-            return _main(cfg, h)
+    if cfg.common.precision == "bfloat16":
+        print("---- Use amp autocast to bfloat16")
+        with torch.cpu.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            if cfg.common_eval.results_path is not None:
+                os.makedirs(cfg.common_eval.results_path, exist_ok=True)
+                output_path = os.path.join(
+                    cfg.common_eval.results_path,
+                    "generate-{}.txt".format(cfg.dataset.gen_subset),
+                )
+                with open(output_path, "w", buffering=1, encoding="utf-8") as h:
+                    return _main(cfg, h)
+            else:
+                return _main(cfg, sys.stdout)
+    elif cfg.common.precision == "float16":
+        print("---- Use amp autocast to float16")
+        with torch.cpu.amp.autocast(enabled=True, dtype=torch.half):
+            if cfg.common_eval.results_path is not None:
+                os.makedirs(cfg.common_eval.results_path, exist_ok=True)
+                output_path = os.path.join(
+                    cfg.common_eval.results_path,
+                    "generate-{}.txt".format(cfg.dataset.gen_subset),
+                )
+                with open(output_path, "w", buffering=1, encoding="utf-8") as h:
+                    return _main(cfg, h)
+            else:
+                return _main(cfg, sys.stdout)
     else:
-        return _main(cfg, sys.stdout)
+        if cfg.common_eval.results_path is not None:
+            os.makedirs(cfg.common_eval.results_path, exist_ok=True)
+            output_path = os.path.join(
+                cfg.common_eval.results_path,
+                "generate-{}.txt".format(cfg.dataset.gen_subset),
+            )
+            with open(output_path, "w", buffering=1, encoding="utf-8") as h:
+                return _main(cfg, h)
+        else:
+            return _main(cfg, sys.stdout)
 
 
 def get_symbols_to_strip_from_output(generator):
@@ -56,7 +84,7 @@ def get_symbols_to_strip_from_output(generator):
     else:
         return {generator.eos}
 
-
+@torch.no_grad()
 def _main(cfg: DictConfig, output_file):
     logging.basicConfig(
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -131,6 +159,9 @@ def _main(cfg: DictConfig, output_file):
             model.half()
         if use_cuda and not cfg.distributed_training.pipeline_model_parallel:
             model.cuda()
+        if cfg.common.channels_last:
+            model = model.to(memory_format=torch.channels_last)
+            print("---- Use NHWC model")
         model.prepare_for_inference_(cfg)
 
     # Load alignment dictionary for unknown word replacement
@@ -184,188 +215,400 @@ def _main(cfg: DictConfig, output_file):
     num_sentences = 0
     has_target = True
     wps_meter = TimeMeter()
-    for sample in progress:
-        sample = utils.move_to_cuda(sample) if use_cuda else sample
-        if "net_input" not in sample:
-            continue
+    if cfg.common.profile:
+        prof_act = [torch.profiler.ProfilerActivity.CUDA, torch.profiler.ProfilerActivity.CPU]
+        with torch.profiler.profile(
+            activities=prof_act,
+            record_shapes=True,
+            schedule=torch.profiler.schedule(
+                wait=int(cfg.common.num_iter/2),
+                warmup=2,
+                active=1,
+            ),
+            on_trace_ready=trace_handler,
+        ) as p:
+            for sample in progress:
+                if cfg.common.num_iter > 0 and num_sentences >= cfg.common.num_iter: break
+                sample = utils.move_to_cuda(sample) if use_cuda else sample
+                if cfg.common.channels_last:
+                    try:
+                        sample = {k:v.contiguous(memory_format=torch.channels_last) for k,v in sample.items()}
+                    except Exception as e:
+                        print(e)
+                if "net_input" not in sample:
+                    continue
 
-        prefix_tokens = None
-        if cfg.generation.prefix_size > 0:
-            prefix_tokens = sample["target"][:, : cfg.generation.prefix_size]
+                prefix_tokens = None
+                if cfg.generation.prefix_size > 0:
+                    prefix_tokens = sample["target"][:, : cfg.generation.prefix_size]
 
-        constraints = None
-        if "constraints" in sample:
-            constraints = sample["constraints"]
+                constraints = None
+                if "constraints" in sample:
+                    constraints = sample["constraints"]
 
-        gen_timer.start()
-        hypos = task.inference_step(
-            generator,
-            models,
-            sample,
-            prefix_tokens=prefix_tokens,
-            constraints=constraints,
-        )
-        num_generated_tokens = sum(len(h[0]["tokens"]) for h in hypos)
-        gen_timer.stop(num_generated_tokens)
-
-        for i, sample_id in enumerate(sample["id"].tolist()):
-            has_target = sample["target"] is not None
-
-            # Remove padding
-            if "src_tokens" in sample["net_input"]:
-                src_tokens = utils.strip_pad(
-                    sample["net_input"]["src_tokens"][i, :], tgt_dict.pad()
+                gen_timer.start()
+                hypos = task.inference_step(
+                    generator,
+                    models,
+                    sample,
+                    prefix_tokens=prefix_tokens,
+                    constraints=constraints,
                 )
-            else:
-                src_tokens = None
+                num_generated_tokens = sum(len(h[0]["tokens"]) for h in hypos)
+                if torch.cuda.is_available(): torch.cuda.synchronize()
+                p.step()
+                gen_timer.stop(num_generated_tokens)
+                print("Iteration: {}, inference time: {} sec.".format(num_sentences, gen_timer.avg), flush=True)
 
-            target_tokens = None
-            if has_target:
-                target_tokens = (
-                    utils.strip_pad(sample["target"][i, :], tgt_dict.pad()).int().cpu()
-                )
+                for i, sample_id in enumerate(sample["id"].tolist()):
+                    has_target = sample["target"] is not None
 
-            # Either retrieve the original sentences or regenerate them from tokens.
-            if align_dict is not None:
-                src_str = task.dataset(cfg.dataset.gen_subset).src.get_original_text(
-                    sample_id
-                )
-                target_str = task.dataset(cfg.dataset.gen_subset).tgt.get_original_text(
-                    sample_id
-                )
-            else:
-                if src_dict is not None:
-                    src_str = src_dict.string(src_tokens, cfg.common_eval.post_process)
-                else:
-                    src_str = ""
-                if has_target:
-                    target_str = tgt_dict.string(
-                        target_tokens,
-                        cfg.common_eval.post_process,
-                        escape_unk=True,
-                        extra_symbols_to_ignore=get_symbols_to_strip_from_output(
-                            generator
-                        ),
-                    )
+                    # Remove padding
+                    if "src_tokens" in sample["net_input"]:
+                        src_tokens = utils.strip_pad(
+                            sample["net_input"]["src_tokens"][i, :], tgt_dict.pad()
+                        )
+                    else:
+                        src_tokens = None
 
-            src_str = decode_fn(src_str)
-            if has_target:
-                target_str = decode_fn(target_str)
+                    target_tokens = None
+                    if has_target:
+                        target_tokens = (
+                            utils.strip_pad(sample["target"][i, :], tgt_dict.pad()).int().cpu()
+                        )
 
-            if not cfg.common_eval.quiet:
-                if src_dict is not None:
-                    print("S-{}\t{}".format(sample_id, src_str), file=output_file)
-                if has_target:
-                    print("T-{}\t{}".format(sample_id, target_str), file=output_file)
-
-            # Process top predictions
-            for j, hypo in enumerate(hypos[i][: cfg.generation.nbest]):
-                hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
-                    hypo_tokens=hypo["tokens"].int().cpu(),
-                    src_str=src_str,
-                    alignment=hypo["alignment"],
-                    align_dict=align_dict,
-                    tgt_dict=tgt_dict,
-                    remove_bpe=cfg.common_eval.post_process,
-                    extra_symbols_to_ignore=get_symbols_to_strip_from_output(generator),
-                )
-                detok_hypo_str = decode_fn(hypo_str)
-                if not cfg.common_eval.quiet:
-                    score = hypo["score"] / math.log(2)  # convert to base 2
-                    # original hypothesis (after tokenization and BPE)
-                    print(
-                        "H-{}\t{}\t{}".format(sample_id, score, hypo_str),
-                        file=output_file,
-                    )
-                    # detokenized hypothesis
-                    print(
-                        "D-{}\t{}\t{}".format(sample_id, score, detok_hypo_str),
-                        file=output_file,
-                    )
-                    print(
-                        "P-{}\t{}".format(
-                            sample_id,
-                            " ".join(
-                                map(
-                                    lambda x: "{:.4f}".format(x),
-                                    # convert from base e to base 2
-                                    hypo["positional_scores"]
-                                    .div_(math.log(2))
-                                    .tolist(),
-                                )
-                            ),
-                        ),
-                        file=output_file,
-                    )
-
-                    if cfg.generation.print_alignment == "hard":
-                        print(
-                            "A-{}\t{}".format(
-                                sample_id,
-                                " ".join(
-                                    [
-                                        "{}-{}".format(src_idx, tgt_idx)
-                                        for src_idx, tgt_idx in alignment
-                                    ]
+                    # Either retrieve the original sentences or regenerate them from tokens.
+                    if align_dict is not None:
+                        src_str = task.dataset(cfg.dataset.gen_subset).src.get_original_text(
+                            sample_id
+                        )
+                        target_str = task.dataset(cfg.dataset.gen_subset).tgt.get_original_text(
+                            sample_id
+                        )
+                    else:
+                        if src_dict is not None:
+                            src_str = src_dict.string(src_tokens, cfg.common_eval.post_process)
+                        else:
+                            src_str = ""
+                        if has_target:
+                            target_str = tgt_dict.string(
+                                target_tokens,
+                                cfg.common_eval.post_process,
+                                escape_unk=True,
+                                extra_symbols_to_ignore=get_symbols_to_strip_from_output(
+                                    generator
                                 ),
-                            ),
-                            file=output_file,
-                        )
-                    if cfg.generation.print_alignment == "soft":
-                        print(
-                            "A-{}\t{}".format(
-                                sample_id,
-                                " ".join(
-                                    [",".join(src_probs) for src_probs in alignment]
-                                ),
-                            ),
-                            file=output_file,
-                        )
+                            )
 
-                    if cfg.generation.print_step:
-                        print(
-                            "I-{}\t{}".format(sample_id, hypo["steps"]),
-                            file=output_file,
-                        )
+                    src_str = decode_fn(src_str)
+                    if has_target:
+                        target_str = decode_fn(target_str)
 
-                    if cfg.generation.retain_iter_history:
-                        for step, h in enumerate(hypo["history"]):
-                            _, h_str, _ = utils.post_process_prediction(
-                                hypo_tokens=h["tokens"].int().cpu(),
-                                src_str=src_str,
-                                alignment=None,
-                                align_dict=None,
-                                tgt_dict=tgt_dict,
-                                remove_bpe=None,
+                    if not cfg.common_eval.quiet:
+                        if src_dict is not None:
+                            print("S-{}\t{}".format(sample_id, src_str), file=output_file)
+                        if has_target:
+                            print("T-{}\t{}".format(sample_id, target_str), file=output_file)
+
+                    # Process top predictions
+                    for j, hypo in enumerate(hypos[i][: cfg.generation.nbest]):
+                        hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
+                            hypo_tokens=hypo["tokens"].int().cpu(),
+                            src_str=src_str,
+                            alignment=hypo["alignment"],
+                            align_dict=align_dict,
+                            tgt_dict=tgt_dict,
+                            remove_bpe=cfg.common_eval.post_process,
+                            extra_symbols_to_ignore=get_symbols_to_strip_from_output(generator),
+                        )
+                        detok_hypo_str = decode_fn(hypo_str)
+                        if not cfg.common_eval.quiet:
+                            score = hypo["score"] / math.log(2)  # convert to base 2
+                            # original hypothesis (after tokenization and BPE)
+                            print(
+                                "H-{}\t{}\t{}".format(sample_id, score, hypo_str),
+                                file=output_file,
+                            )
+                            # detokenized hypothesis
+                            print(
+                                "D-{}\t{}\t{}".format(sample_id, score, detok_hypo_str),
+                                file=output_file,
                             )
                             print(
-                                "E-{}_{}\t{}".format(sample_id, step, h_str),
+                                "P-{}\t{}".format(
+                                    sample_id,
+                                    " ".join(
+                                        map(
+                                            lambda x: "{:.4f}".format(x),
+                                            # convert from base e to base 2
+                                            hypo["positional_scores"]
+                                            .div_(math.log(2))
+                                            .tolist(),
+                                        )
+                                    ),
+                                ),
                                 file=output_file,
                             )
 
-                # Score only the top hypothesis
-                if has_target and j == 0:
-                    if (
-                        align_dict is not None
-                        or cfg.common_eval.post_process is not None
-                    ):
-                        # Convert back to tokens for evaluation with unk replacement and/or without BPE
-                        target_tokens = tgt_dict.encode_line(
-                            target_str, add_if_not_exist=True
-                        )
-                        hypo_tokens = tgt_dict.encode_line(
-                            detok_hypo_str, add_if_not_exist=True
-                        )
-                    if hasattr(scorer, "add_string"):
-                        scorer.add_string(target_str, detok_hypo_str)
-                    else:
-                        scorer.add(target_tokens, hypo_tokens)
+                            if cfg.generation.print_alignment == "hard":
+                                print(
+                                    "A-{}\t{}".format(
+                                        sample_id,
+                                        " ".join(
+                                            [
+                                                "{}-{}".format(src_idx, tgt_idx)
+                                                for src_idx, tgt_idx in alignment
+                                            ]
+                                        ),
+                                    ),
+                                    file=output_file,
+                                )
+                            if cfg.generation.print_alignment == "soft":
+                                print(
+                                    "A-{}\t{}".format(
+                                        sample_id,
+                                        " ".join(
+                                            [",".join(src_probs) for src_probs in alignment]
+                                        ),
+                                    ),
+                                    file=output_file,
+                                )
 
-        wps_meter.update(num_generated_tokens)
-        progress.log({"wps": round(wps_meter.avg)})
-        num_sentences += (
-            sample["nsentences"] if "nsentences" in sample else sample["id"].numel()
-        )
+                            if cfg.generation.print_step:
+                                print(
+                                    "I-{}\t{}".format(sample_id, hypo["steps"]),
+                                    file=output_file,
+                                )
+
+                            if cfg.generation.retain_iter_history:
+                                for step, h in enumerate(hypo["history"]):
+                                    _, h_str, _ = utils.post_process_prediction(
+                                        hypo_tokens=h["tokens"].int().cpu(),
+                                        src_str=src_str,
+                                        alignment=None,
+                                        align_dict=None,
+                                        tgt_dict=tgt_dict,
+                                        remove_bpe=None,
+                                    )
+                                    print(
+                                        "E-{}_{}\t{}".format(sample_id, step, h_str),
+                                        file=output_file,
+                                    )
+
+                        # Score only the top hypothesis
+                        if has_target and j == 0:
+                            if (
+                                align_dict is not None
+                                or cfg.common_eval.post_process is not None
+                            ):
+                                # Convert back to tokens for evaluation with unk replacement and/or without BPE
+                                target_tokens = tgt_dict.encode_line(
+                                    target_str, add_if_not_exist=True
+                                )
+                                hypo_tokens = tgt_dict.encode_line(
+                                    detok_hypo_str, add_if_not_exist=True
+                                )
+                            if hasattr(scorer, "add_string"):
+                                scorer.add_string(target_str, detok_hypo_str)
+                            else:
+                                scorer.add(target_tokens, hypo_tokens)
+
+                wps_meter.update(num_generated_tokens)
+                progress.log({"wps": round(wps_meter.avg)})
+                num_sentences += (
+                    sample["nsentences"] if "nsentences" in sample else sample["id"].numel()
+                )
+    else:
+        for sample in progress:
+            if cfg.common.num_iter > 0 and num_sentences >= cfg.common.num_iter: break
+            sample = utils.move_to_cuda(sample) if use_cuda else sample
+            if cfg.common.channels_last:
+                try:
+                    sample = {k:v.contiguous(memory_format=torch.channels_last) for k,v in sample.items()}
+                except Exception as e:
+                    print(e)
+            if "net_input" not in sample:
+                continue
+
+            prefix_tokens = None
+            if cfg.generation.prefix_size > 0:
+                prefix_tokens = sample["target"][:, : cfg.generation.prefix_size]
+
+            constraints = None
+            if "constraints" in sample:
+                constraints = sample["constraints"]
+
+            gen_timer.start()
+            hypos = task.inference_step(
+                generator,
+                models,
+                sample,
+                prefix_tokens=prefix_tokens,
+                constraints=constraints,
+            )
+            num_generated_tokens = sum(len(h[0]["tokens"]) for h in hypos)
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            gen_timer.stop(num_generated_tokens)
+            print("Iteration: {}, inference time: {} sec.".format(num_sentences, gen_timer.avg), flush=True)
+
+            for i, sample_id in enumerate(sample["id"].tolist()):
+                has_target = sample["target"] is not None
+
+                # Remove padding
+                if "src_tokens" in sample["net_input"]:
+                    src_tokens = utils.strip_pad(
+                        sample["net_input"]["src_tokens"][i, :], tgt_dict.pad()
+                    )
+                else:
+                    src_tokens = None
+
+                target_tokens = None
+                if has_target:
+                    target_tokens = (
+                        utils.strip_pad(sample["target"][i, :], tgt_dict.pad()).int().cpu()
+                    )
+
+                # Either retrieve the original sentences or regenerate them from tokens.
+                if align_dict is not None:
+                    src_str = task.dataset(cfg.dataset.gen_subset).src.get_original_text(
+                        sample_id
+                    )
+                    target_str = task.dataset(cfg.dataset.gen_subset).tgt.get_original_text(
+                        sample_id
+                    )
+                else:
+                    if src_dict is not None:
+                        src_str = src_dict.string(src_tokens, cfg.common_eval.post_process)
+                    else:
+                        src_str = ""
+                    if has_target:
+                        target_str = tgt_dict.string(
+                            target_tokens,
+                            cfg.common_eval.post_process,
+                            escape_unk=True,
+                            extra_symbols_to_ignore=get_symbols_to_strip_from_output(
+                                generator
+                            ),
+                        )
+
+                src_str = decode_fn(src_str)
+                if has_target:
+                    target_str = decode_fn(target_str)
+
+                if not cfg.common_eval.quiet:
+                    if src_dict is not None:
+                        print("S-{}\t{}".format(sample_id, src_str), file=output_file)
+                    if has_target:
+                        print("T-{}\t{}".format(sample_id, target_str), file=output_file)
+
+                # Process top predictions
+                for j, hypo in enumerate(hypos[i][: cfg.generation.nbest]):
+                    hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
+                        hypo_tokens=hypo["tokens"].int().cpu(),
+                        src_str=src_str,
+                        alignment=hypo["alignment"],
+                        align_dict=align_dict,
+                        tgt_dict=tgt_dict,
+                        remove_bpe=cfg.common_eval.post_process,
+                        extra_symbols_to_ignore=get_symbols_to_strip_from_output(generator),
+                    )
+                    detok_hypo_str = decode_fn(hypo_str)
+                    if not cfg.common_eval.quiet:
+                        score = hypo["score"] / math.log(2)  # convert to base 2
+                        # original hypothesis (after tokenization and BPE)
+                        print(
+                            "H-{}\t{}\t{}".format(sample_id, score, hypo_str),
+                            file=output_file,
+                        )
+                        # detokenized hypothesis
+                        print(
+                            "D-{}\t{}\t{}".format(sample_id, score, detok_hypo_str),
+                            file=output_file,
+                        )
+                        print(
+                            "P-{}\t{}".format(
+                                sample_id,
+                                " ".join(
+                                    map(
+                                        lambda x: "{:.4f}".format(x),
+                                        # convert from base e to base 2
+                                        hypo["positional_scores"]
+                                        .div_(math.log(2))
+                                        .tolist(),
+                                    )
+                                ),
+                            ),
+                            file=output_file,
+                        )
+
+                        if cfg.generation.print_alignment == "hard":
+                            print(
+                                "A-{}\t{}".format(
+                                    sample_id,
+                                    " ".join(
+                                        [
+                                            "{}-{}".format(src_idx, tgt_idx)
+                                            for src_idx, tgt_idx in alignment
+                                        ]
+                                    ),
+                                ),
+                                file=output_file,
+                            )
+                        if cfg.generation.print_alignment == "soft":
+                            print(
+                                "A-{}\t{}".format(
+                                    sample_id,
+                                    " ".join(
+                                        [",".join(src_probs) for src_probs in alignment]
+                                    ),
+                                ),
+                                file=output_file,
+                            )
+
+                        if cfg.generation.print_step:
+                            print(
+                                "I-{}\t{}".format(sample_id, hypo["steps"]),
+                                file=output_file,
+                            )
+
+                        if cfg.generation.retain_iter_history:
+                            for step, h in enumerate(hypo["history"]):
+                                _, h_str, _ = utils.post_process_prediction(
+                                    hypo_tokens=h["tokens"].int().cpu(),
+                                    src_str=src_str,
+                                    alignment=None,
+                                    align_dict=None,
+                                    tgt_dict=tgt_dict,
+                                    remove_bpe=None,
+                                )
+                                print(
+                                    "E-{}_{}\t{}".format(sample_id, step, h_str),
+                                    file=output_file,
+                                )
+
+                    # Score only the top hypothesis
+                    if has_target and j == 0:
+                        if (
+                            align_dict is not None
+                            or cfg.common_eval.post_process is not None
+                        ):
+                            # Convert back to tokens for evaluation with unk replacement and/or without BPE
+                            target_tokens = tgt_dict.encode_line(
+                                target_str, add_if_not_exist=True
+                            )
+                            hypo_tokens = tgt_dict.encode_line(
+                                detok_hypo_str, add_if_not_exist=True
+                            )
+                        if hasattr(scorer, "add_string"):
+                            scorer.add_string(target_str, detok_hypo_str)
+                        else:
+                            scorer.add(target_tokens, hypo_tokens)
+
+            wps_meter.update(num_generated_tokens)
+            progress.log({"wps": round(wps_meter.avg)})
+            num_sentences += (
+                sample["nsentences"] if "nsentences" in sample else sample["id"].numel()
+            )
 
     logger.info("NOTE: hypothesis and token scores are output in base 2")
     logger.info(
@@ -377,6 +620,7 @@ def _main(cfg: DictConfig, output_file):
             1.0 / gen_timer.avg,
         )
     )
+    print("inference Throughput: {} tokens/s".format(1.0 / gen_timer.avg))
     if has_target:
         if cfg.bpe and not cfg.generation.sacrebleu:
             if cfg.common_eval.post_process:
@@ -396,6 +640,20 @@ def _main(cfg: DictConfig, output_file):
         )
 
     return scorer
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="self_cpu_time_total")
+    print(output)
+    import pathlib
+    timeline_dir = str(pathlib.Path.cwd()) + '/timeline/'
+    if not os.path.exists(timeline_dir):
+        try:
+            os.makedirs(timeline_dir)
+        except:
+            pass
+    timeline_file = timeline_dir + 'timeline-' + str(torch.backends.quantized.engine) + '-' + \
+                'FairSeq-' + str(p.step_num) + '-' + str(os.getpid()) + '.json'
+    p.export_chrome_trace(timeline_file)
 
 
 def cli_main():

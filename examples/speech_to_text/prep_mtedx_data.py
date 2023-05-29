@@ -48,9 +48,7 @@ class mTEDx(Dataset):
     """
 
     SPLITS = ["train", "valid", "test"]
-    LANGPAIRS = ["es-es", "fr-fr", "pt-pt", "it-it", "ru-ru", "el-el", "ar-ar",
-                 "de-de", "es-en", "es-fr", "es-pt", "es-it", "fr-en", "fr-es",
-                 "fr-pt", "pt-en", "pt-es", "it-en", "it-es", "ru-en", "el-en"]
+    LANGPAIRS = ["es-fr"]
 
     def __init__(self, root: str, lang: str, split: str) -> None:
         assert split in self.SPLITS and lang in self.LANGPAIRS
