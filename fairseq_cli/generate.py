@@ -162,6 +162,8 @@ def _main(cfg: DictConfig, output_file):
         if cfg.common.channels_last:
             model = model.to(memory_format=torch.channels_last)
             print("---- Use NHWC model")
+        if cfg.common.compile:
+            model = torch.compile(model, backend=cfg.common.backend, options={"freezing": True})
         model.prepare_for_inference_(cfg)
 
     # Load alignment dictionary for unknown word replacement
@@ -215,6 +217,7 @@ def _main(cfg: DictConfig, output_file):
     num_sentences = 0
     has_target = True
     wps_meter = TimeMeter()
+
     if cfg.common.profile:
         prof_act = [torch.profiler.ProfilerActivity.CUDA, torch.profiler.ProfilerActivity.CPU]
         with torch.profiler.profile(
