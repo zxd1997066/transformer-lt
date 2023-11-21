@@ -205,6 +205,10 @@ def get_parser(desc, default_task='translation'):
                         help='iterations number to warmup')
     parser.add_argument('--channels_last', type=int, default=1,
                         help='use channels last format')
+    parser.add_argument("--compile", action='store_true', default=False,
+                    help="enable torch.compile")
+    parser.add_argument("--backend", type=str, default='inductor',
+                    help="enable torch.compile backend")
     parser.add_argument('--profile', action='store_true',
                         help='Trigger profile on current topology.')
 
