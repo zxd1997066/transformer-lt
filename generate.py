@@ -86,6 +86,8 @@ def main(args):
                 print("---- With JIT disabled.")
             if args.ipex:
                 model = torch.jit.freeze(model)
+        if args.compile:
+            model = torch.compile(model, backend=args.backend, options={"freezing": True})
 
     # Load alignment dictionary for unknown word replacement
     # (None if no unknown word replacement, empty if no path to align dictionary)
