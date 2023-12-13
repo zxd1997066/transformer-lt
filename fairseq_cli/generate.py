@@ -41,7 +41,7 @@ def main(cfg: DictConfig):
 
     if cfg.common.precision == "bfloat16":
         print("---- Use amp autocast to bfloat16")
-        with torch.cpu.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=True, dtype=torch.bfloat16):
             if cfg.common_eval.results_path is not None:
                 os.makedirs(cfg.common_eval.results_path, exist_ok=True)
                 output_path = os.path.join(
@@ -54,7 +54,7 @@ def main(cfg: DictConfig):
                 return _main(cfg, sys.stdout)
     elif cfg.common.precision == "float16":
         print("---- Use amp autocast to float16")
-        with torch.cpu.amp.autocast(enabled=True, dtype=torch.half):
+        with torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=True, dtype=torch.half):
             if cfg.common_eval.results_path is not None:
                 os.makedirs(cfg.common_eval.results_path, exist_ok=True)
                 output_path = os.path.join(
