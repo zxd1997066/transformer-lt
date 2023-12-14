@@ -280,10 +280,10 @@ def cli_main():
     parser = options.get_generation_parser()
     args = options.parse_args_and_arch(parser)
     if args.precision == "bfloat16":
-        with torch.cpu.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=True, dtype=torch.bfloat16):
             main(args)
     elif args.precision == "float16":
-        with torch.cpu.amp.autocast(enabled=True, dtype=torch.half):
+        with torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=True, dtype=torch.half):
             main(args)
     else:
         main(args)
