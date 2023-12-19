@@ -105,7 +105,7 @@ def _main(cfg: DictConfig, output_file):
         np.random.seed(cfg.common.seed)
         utils.set_torch_seed(cfg.common.seed)
 
-    use_cuda = torch.cuda.is_available() and not cfg.common.cpu
+    use_cuda = torch.cuda.is_available()
 
     # Load dataset splits
     task = tasks.setup_task(cfg.task)
