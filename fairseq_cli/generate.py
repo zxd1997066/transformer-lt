@@ -31,7 +31,7 @@ def main(args):
         # with torch.amp.autocast(enabled=True, configure=torch.bfloat16, torch.no_grad(): 
         print("Running with bfloat16...")
 
-    use_cuda = torch.cuda.is_available() and not args.cpu
+    use_cuda = torch.cuda.is_available()
 
     # Load dataset splits
     task = tasks.setup_task(args)
