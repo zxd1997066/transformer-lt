@@ -32,6 +32,9 @@ function main {
         #
         for batch_size in ${batch_size_list[@]}
         do
+            if [ $batch_size -le 0 ];then
+                batch_size=8
+            fi
             # clean workspace
             logs_path_clean
             # generate launch script for multiple instance
