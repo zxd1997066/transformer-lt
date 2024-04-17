@@ -200,7 +200,8 @@ def _main(cfg: DictConfig, output_file):
     generator = task.build_generator(
         models, cfg.generation, extra_gen_cls_kwargs=extra_gen_cls_kwargs
     )
-
+    if cfg.common.compile:
+        model = torch.compile(generator, backend=cfg.common.backend, options={"freezing": True})
     # Handle tokenization and BPE
     tokenizer = task.build_tokenizer(cfg.tokenizer)
     bpe = task.build_bpe(cfg.bpe)
