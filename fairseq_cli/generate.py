@@ -150,7 +150,8 @@ def _main(cfg: DictConfig, output_file):
         assert len(lms) == 1
     else:
         lms = [None]
-
+    if cfg.common.compile:
+        lms = torch.compile(lms, backend=cfg.common.backend, options={"freezing": True})
     # Optimize ensemble for generation
     for model in chain(models, lms):
         if model is None:
