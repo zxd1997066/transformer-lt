@@ -207,8 +207,8 @@ def _main(cfg: DictConfig, output_file):
     if cfg.common.compile:
         model = torch.compile(generator, backend=cfg.common.backend, options={"freezing": True})
     
-    if cfg.common.compile:
-        task.inference_step = torch.compile(task.inference_step, backend=cfg.common.backend, options={"freezing": True})
+    # if cfg.common.compile:
+    #     task.inference_step = torch.compile(task.inference_step, backend=cfg.common.backend, options={"freezing": True})
     # Handle tokenization and BPE
     tokenizer = task.build_tokenizer(cfg.tokenizer)
     bpe = task.build_bpe(cfg.bpe)
