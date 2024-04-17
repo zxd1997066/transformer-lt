@@ -70,6 +70,8 @@ def main(args):
             except:
                 print("---- Use normal format.")
             model = model_oob
+        if args.compile:
+            model = torch.compile(model, backend=args.backend, options={"freezing": True})
         if args.ipex:
             import intel_extension_for_pytorch as ipex
             if args.precision == 'bfloat16':
@@ -112,6 +114,8 @@ def main(args):
     # Initialize generator
     gen_timer = StopwatchMeter()
     generator = task.build_generator(args)
+    if args.compile:
+        model = torch.compile(generator, backend=args.backend, options={"freezing": True})
 
     # Generate and compute BLEU score
     if args.sacrebleu:
