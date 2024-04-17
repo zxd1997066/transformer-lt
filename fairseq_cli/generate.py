@@ -160,8 +160,13 @@ def _main(cfg: DictConfig, output_file):
         if use_cuda and not cfg.distributed_training.pipeline_model_parallel:
             model.cuda()
         if cfg.common.channels_last:
-            model = model.to(memory_format=torch.channels_last)
-            print("---- Use NHWC model")
+            try:
+                model_cl = model.to(memory_format=torch.channels_last)
+                print("---- Use NHWC model")
+            except:
+                model_cl = model
+            finally:
+                mdoel = model_cl
         if cfg.common.compile:
             model = torch.compile(model, backend=cfg.common.backend, options={"freezing": True})
         model.prepare_for_inference_(cfg)
