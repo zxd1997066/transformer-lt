@@ -241,9 +241,11 @@ def _main(cfg: DictConfig, output_file):
                 sample = utils.move_to_cuda(sample) if use_cuda else sample
                 if cfg.common.channels_last:
                     try:
-                        sample = {k:v.contiguous(memory_format=torch.channels_last) for k,v in sample.items()}
-                    except Exception as e:
-                        print(e)
+                        sample_cl = {k:v.contiguous(memory_format=torch.channels_last) for k,v in sample.items()}
+                    except:
+                        sample_cl = sample
+                    finally:
+                        sample =sample_cl
                 if "net_input" not in sample:
                     continue
 
