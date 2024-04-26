@@ -123,7 +123,7 @@ function generate_core_launcher {
 }
 
 # download common files
-rm -rf oob-common && git clone https://github.com/intel-sandbox/oob-common.git
-
+# rm -rf oob-common && git clone https://github.com/intel-sandbox/oob-common.git
+rm -rf oob-common && git clone https://github.com/zxd1997066/oob-common.git
 # Start
 main "$@"
