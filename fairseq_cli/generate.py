@@ -114,7 +114,8 @@ def main(args):
     # Initialize generator
     gen_timer = StopwatchMeter()
     generator = task.build_generator(args)
-
+    if args.compile:
+        model = torch.compile(generator, backend=args.backend, options={"freezing": True})
     # Generate and compute BLEU score
     if args.sacrebleu:
         scorer = bleu.SacrebleuScorer()
