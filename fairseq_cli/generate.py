@@ -38,7 +38,10 @@ def main(cfg: DictConfig):
     assert (
         cfg.generation.replace_unk is None or cfg.dataset.dataset_impl == "raw"
     ), "--replace-unk requires a raw text dataset (--dataset-impl=raw)"
-
+    if cfg.common.triton_cpu:
+        print("run with triton cpu backend")
+        import torch._inductor.config
+        torch._inductor.config.cpu_backend="triton"
     if cfg.common.precision == "bfloat16":
         print("---- Use amp autocast to bfloat16")
         with torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=True, dtype=torch.bfloat16):
