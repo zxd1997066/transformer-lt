@@ -22,7 +22,10 @@ def main(args):
         '--replace-unk requires a raw text dataset (--raw-text)'
 
     utils.import_user_module(args)
-
+    if args.triton_cpu:
+        print("run with triton cpu backend")
+        import torch._inductor.config
+        torch._inductor.config.cpu_backend="triton"
     if args.max_tokens is None and args.max_sentences is None:
         args.max_tokens = 12000
     print(args)
