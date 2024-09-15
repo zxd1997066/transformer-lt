@@ -196,6 +196,7 @@ class CommonConfig(FairseqDataclass):
     channels_last: int = field(default=1, metadata={"help": "channels_last"})
     profile: bool = field(default=False, metadata={"help": "profile"})
     compile: bool = field(default=False, metadata={"help": "torch.compile"})
+    triton_cpu: bool = field(default=False, metadata={"help": "enable triton_cpu"})
     backend: str = field(default='inductor', metadata={"help": "compile backend"})
     num_iter: int = field(default=0, metadata={"help": "num_iter"})
     num_warmup: int = field(default=0, metadata={"help": "num_warmup"})
