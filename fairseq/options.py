@@ -211,6 +211,8 @@ def get_parser(desc, default_task='translation'):
                     help="enable torch.compile backend")
     parser.add_argument('--profile', action='store_true',
                         help='Trigger profile on current topology.')
+    parser.add_argument("--triton_cpu", action='store_true', default=False,
+                    help="enable triton_cpu")
 
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():
