@@ -22,6 +22,7 @@ def main(args):
         '--replace-unk requires a raw text dataset (--raw-text)'
 
     utils.import_user_module(args)
+    import torch
     if args.triton_cpu:
         print("run with triton cpu backend")
         import torch._inductor.config
